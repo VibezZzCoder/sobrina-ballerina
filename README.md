@@ -13,6 +13,8 @@ asks is not *can you survive the stage?* but **can you finish it beautifully?**
 
 > **Play now:** [Launch Sobrina Ballerina](https://vibezzzcoder.github.io/sobrina-ballerina/)
 
+![Gameplay Screenshot](sb-screenshot.png)
+
 Or alternatively, open **`release/upload/index.html`** in any modern browser. Double-click it,
 or drag it into a browser window. That single file *is* the whole game.
 
