@@ -11,7 +11,9 @@ asks is not *can you survive the stage?* but **can you finish it beautifully?**
 
 ## Playing the Game
 
-Open **`release/upload/index.html`** in any modern browser. Double-click it,
+> **Play now:** [Launch Sobrina Ballerina](https://vibezzzcoder.github.io/sobrina-ballerina/)
+
+Or alternatively, open **`release/upload/index.html`** in any modern browser. Double-click it,
 or drag it into a browser window. That single file *is* the whole game.
 
 **It works completely offline.** Airplane mode, no Wi-Fi, a plane, a car, a
