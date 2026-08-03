@@ -23,9 +23,23 @@ See LICENSE.md, CODE_LICENSE.md, and ASSET_LICENSE.md for full terms.
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sobrina Ballerina</title>
   <style>
+    :root {
+      /* `vh` can retain the pre-rotation layout height in an iOS standalone
+         app. Prefer the live visual viewport where the browser supports it. */
+      --game-vw: 100vw;
+      --game-vh: 100vh;
+    }
+    @supports (height: 100dvh) {
+      :root {
+        --game-vw: 100dvw;
+        --game-vh: 100dvh;
+      }
+    }
     html, body {
       margin: 0;
-      height: 100%;
+      width: var(--game-vw);
+      height: var(--game-vh);
+      min-height: var(--game-vh);
       background: #14101f;
       overflow: hidden;
       /* iOS Safari needs its prefixed rules too. Without them a long hold on
@@ -42,8 +56,8 @@ See LICENSE.md, CODE_LICENSE.md, and ASSET_LICENSE.md for full terms.
     }
     canvas {
       /* Letterboxed 16:9 logical canvas (1280x720). */
-      width: min(100vw, calc(100vh * 16 / 9));
-      height: min(100vh, calc(100vw * 9 / 16));
+      width: min(var(--game-vw), calc(var(--game-vh) * 16 / 9));
+      height: min(var(--game-vh), calc(var(--game-vw) * 9 / 16));
       touch-action: none;
       -webkit-user-select: none;
       user-select: none;
@@ -53,8 +67,8 @@ See LICENSE.md, CODE_LICENSE.md, and ASSET_LICENSE.md for full terms.
     @media (orientation: portrait) {
       canvas {
         /* Dedicated 9:16 focus view: readable stage crop + large controls. */
-        width: min(100vw, calc(100vh * 9 / 16));
-        height: min(100vh, calc(100vw * 16 / 9));
+        width: min(var(--game-vw), calc(var(--game-vh) * 9 / 16));
+        height: min(var(--game-vh), calc(var(--game-vw) * 16 / 9));
       }
     }
     .sr-only {
@@ -3412,10 +3426,20 @@ class TouchControls {
       this.updateLayout();
       this.releaseAll();
     });
+    // Standalone iOS can update its visual viewport during rotation before it
+    // publishes a matching window resize. Keep button geometry in that live
+    // viewport so the lower row never falls beyond the visible screen.
+    window.visualViewport?.addEventListener('resize', () => {
+      this.updateLayout();
+      this.releaseAll();
+    });
   }
 
   updateLayout() {
-    this.portrait = window.innerHeight > window.innerWidth;
+    const viewport = window.visualViewport;
+    const width = viewport?.width || window.innerWidth;
+    const height = viewport?.height || window.innerHeight;
+    this.portrait = height > width;
     this.buttons = this.portrait ? PORTRAIT_BUTTONS : BUTTONS;
   }
 
@@ -3546,7 +3570,14 @@ __modules['src/main/main.js'] = (() => {
 
 const canvas = document.getElementById('game');
 const status = document.getElementById('game-status');
-const initialPortrait = window.innerHeight > window.innerWidth;
+function viewportPortrait() {
+  const viewport = window.visualViewport;
+  const width = viewport?.width || window.innerWidth;
+  const height = viewport?.height || window.innerHeight;
+  return height > width;
+}
+
+const initialPortrait = viewportPortrait();
 canvas.width = initialPortrait ? CONFIG.canvas.portraitWidth : CONFIG.canvas.width;
 canvas.height = initialPortrait ? CONFIG.canvas.portraitHeight : CONFIG.canvas.height;
 const ctx = canvas.getContext('2d');
@@ -3580,8 +3611,8 @@ touch.onMute = () => {
   const muted = audio.toggleMute();
   game.flashHint(muted ? 'Sound off' : 'Sound on');
 };
-window.addEventListener('resize', () => {
-  const portrait = window.innerHeight > window.innerWidth;
+function syncViewport() {
+  const portrait = viewportPortrait();
   const width = portrait ? CONFIG.canvas.portraitWidth : CONFIG.canvas.width;
   const height = portrait ? CONFIG.canvas.portraitHeight : CONFIG.canvas.height;
   if (canvas.width !== width || canvas.height !== height) {
@@ -3590,7 +3621,10 @@ window.addEventListener('resize', () => {
   }
   touch.updateLayout();
   game.touchPortrait = portrait;
-});
+}
+window.addEventListener('resize', syncViewport);
+window.visualViewport?.addEventListener('resize', syncViewport);
+window.addEventListener('orientationchange', syncViewport);
 
 const STEP = 1 / 60;
 let last = performance.now();
