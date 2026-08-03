@@ -28,6 +28,12 @@ See LICENSE.md, CODE_LICENSE.md, and ASSET_LICENSE.md for full terms.
       height: 100%;
       background: #14101f;
       overflow: hidden;
+      /* iOS Safari needs its prefixed rules too. Without them a long hold on
+         the canvas can open the system Copy / Look Up callout mid-dance. */
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
     }
     body {
       display: flex;
@@ -39,7 +45,10 @@ See LICENSE.md, CODE_LICENSE.md, and ASSET_LICENSE.md for full terms.
       width: min(100vw, calc(100vh * 16 / 9));
       height: min(100vh, calc(100vw * 9 / 16));
       touch-action: none;
+      -webkit-user-select: none;
       user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
     }
     @media (orientation: portrait) {
       canvas {
@@ -3116,21 +3125,26 @@ class AudioCues {
     this.lastScheduledBeat = -1;
   }
 
-  // Call from a user gesture; unsupported/suspended audio fails silently.
+  // Call from a user gesture. iOS commonly creates a *suspended* context on
+  // the first tap, so resume that very context before the gesture ends.
+  // Playback remains optional if a browser declines the request.
   init() {
-    if (this.ctx) {
-      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
-      return;
-    }
     try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      this.ctx = new AC();
-      this.master = this.ctx.createGain();
-      this.master.gain.value = MASTER_VOL;
-      this.master.connect(this.ctx.destination);
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        this.ctx = new AC();
+        this.master = this.ctx.createGain();
+        this.master.gain.value = MASTER_VOL;
+        this.master.connect(this.ctx.destination);
+      }
+      if (this.ctx.state !== 'running' && typeof this.ctx.resume === 'function') {
+        const resumed = this.ctx.resume();
+        if (resumed && typeof resumed.catch === 'function') resumed.catch(() => {});
+      }
     } catch {
       this.ctx = null;
+      this.master = null;
     }
   }
 
@@ -3389,6 +3403,11 @@ class TouchControls {
     canvas.addEventListener('pointerup', (e) => this.up(e));
     canvas.addEventListener('pointercancel', (e) => this.up(e));
     canvas.addEventListener('contextmenu', (e) => { if (this.active) e.preventDefault(); });
+    // Safari can surface a text-selection callout for a long touch even though
+    // the game is canvas-rendered. Keep the game surface an interaction-only
+    // target, while leaving normal keyboard and pointer behavior untouched.
+    canvas.addEventListener('selectstart', (e) => e.preventDefault());
+    canvas.addEventListener('dragstart', (e) => e.preventDefault());
     window.addEventListener('resize', () => {
       this.updateLayout();
       this.releaseAll();
@@ -3539,7 +3558,11 @@ const audio = new AudioCues();
 // Optional pixel-art sprites; non-blocking, vector fallback if unavailable.
 loadSprites();
 
-// Web Audio may only start inside a user gesture; M toggles sound.
+// Web Audio may only start inside a user gesture. Register this before the
+// touch controls so a first mobile tap resumes audio as early as possible.
+canvas.addEventListener('pointerdown', () => audio.init());
+
+// M toggles sound.
 window.addEventListener('keydown', (e) => {
   audio.init();
   if (e.code === 'KeyM' && !e.repeat) {
@@ -3553,10 +3576,10 @@ const touch = new TouchControls(canvas, input, game);
 game.touchMode = touch.active;
 game.touchPortrait = initialPortrait;
 touch.onMute = () => {
+  audio.init();
   const muted = audio.toggleMute();
   game.flashHint(muted ? 'Sound off' : 'Sound on');
 };
-canvas.addEventListener('pointerdown', () => audio.init());
 window.addEventListener('resize', () => {
   const portrait = window.innerHeight > window.innerWidth;
   const width = portrait ? CONFIG.canvas.portraitWidth : CONFIG.canvas.width;
