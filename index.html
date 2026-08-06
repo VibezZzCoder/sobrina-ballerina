@@ -20,26 +20,31 @@ See LICENSE.md, CODE_LICENSE.md, and ASSET_LICENSE.md for full terms.
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- `viewport-fit=cover` takes the safe area away from the system and hands
+       it to `env(safe-area-inset-*)`. Without it, a home-screen web app can
+       keep applying the PORTRAIT status-bar inset after rotating to landscape:
+       the page is shoved down by ~60px while it still reports the full screen
+       height, so the bottom touch controls fall off the screen. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Sobrina Ballerina" />
+  <meta name="theme-color" content="#14101f" />
   <title>Sobrina Ballerina</title>
   <style>
-    :root {
-      /* `vh` can retain the pre-rotation layout height in an iOS standalone
-         app. Prefer the live visual viewport where the browser supports it. */
-      --game-vw: 100vw;
-      --game-vh: 100vh;
-    }
-    @supports (height: 100dvh) {
-      :root {
-        --game-vw: 100dvw;
-        --game-vh: 100dvh;
-      }
-    }
     html, body {
       margin: 0;
-      width: var(--game-vw);
-      height: var(--game-vh);
-      min-height: var(--game-vh);
+      padding: 0;
+      /* Pinned to the screen rather than sized in viewport units: `vh`/`dvh`
+         and the `orientation` media query can both describe the previous
+         orientation inside a standalone iOS app. The canvas box itself is
+         measured and positioned in JS (src/platform/viewport.js). */
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
       background: #14101f;
       overflow: hidden;
       /* iOS Safari needs its prefixed rules too. Without them a long hold on
@@ -49,27 +54,34 @@ See LICENSE.md, CODE_LICENSE.md, and ASSET_LICENSE.md for full terms.
       -webkit-touch-callout: none;
       -webkit-tap-highlight-color: transparent;
     }
-    body {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
     canvas {
-      /* Letterboxed 16:9 logical canvas (1280x720). */
-      width: min(var(--game-vw), calc(var(--game-vh) * 16 / 9));
-      height: min(var(--game-vh), calc(var(--game-vw) * 9 / 16));
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform-origin: 0 0;
+      /* Fallback letterbox for the first paint, before the JS layout pass. */
+      width: min(100vw, calc(100vh * 16 / 9));
+      height: min(100vh, calc(100vw * 9 / 16));
       touch-action: none;
       -webkit-user-select: none;
       user-select: none;
       -webkit-touch-callout: none;
       -webkit-tap-highlight-color: transparent;
     }
-    @media (orientation: portrait) {
-      canvas {
-        /* Dedicated 9:16 focus view: readable stage crop + large controls. */
-        width: min(var(--game-vw), calc(var(--game-vh) * 9 / 16));
-        height: min(var(--game-vh), calc(var(--game-vw) * 16 / 9));
-      }
+    /* Zero-sized probe: `env()` only resolves to pixels on a real property,
+       so the safe-area insets are read back from its computed padding. */
+    #safe-area-probe {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 0;
+      height: 0;
+      visibility: hidden;
+      pointer-events: none;
+      padding-top: env(safe-area-inset-top, 0px);
+      padding-right: env(safe-area-inset-right, 0px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      padding-left: env(safe-area-inset-left, 0px);
     }
     .sr-only {
       position: absolute;
@@ -86,6 +98,7 @@ See LICENSE.md, CODE_LICENSE.md, and ASSET_LICENSE.md for full terms.
 </head>
 <body>
   <p id="game-instructions" class="sr-only">Use the arrow keys to choose menu options and Enter to select. The game teaches movement controls during Rehearsal.</p>
+  <div id="safe-area-probe" aria-hidden="true"></div>
   <canvas id="game" tabindex="0" role="application" aria-label="Sobrina Ballerina interactive ballet game" aria-describedby="game-instructions"></canvas>
   <div id="game-status" class="sr-only" aria-live="polite"></div>
   <script>
@@ -3567,9 +3580,112 @@ class AudioCues {
   return { AudioCues };
 })();
 
+__modules['src/platform/viewport.js'] = (() => {
+
+// Screen layout for the letterboxed canvas: how large the drawing surface is
+// and exactly where it sits on the visible screen.
+//
+// Nothing here trusts CSS. An iOS home-screen web app can keep the PREVIOUS
+// orientation's layout viewport, safe-area inset, and `orientation` media
+// query alive after a rotation. A `dvh`-sized, flex-centred canvas is then
+// sized correctly but pushed down by the stale portrait status-bar inset, so
+// landscape loses its bottom control row off the bottom of the screen while
+// portrait — where the stale inset matches the live one — looks perfect.
+// Measuring the live visual viewport and writing explicit pixel geometry
+// sidesteps every one of those stale signals.
+
+const FALLBACK_W = 1280;
+const FALLBACK_H = 720;
+
+let insets = { top: 0, right: 0, bottom: 0, left: 0 };
+
+// The live VISIBLE box, plus its offset inside the (possibly stale) layout
+// viewport that `position: fixed` is resolved against.
+function measureViewport() {
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  const width = vv?.width || window.innerWidth || FALLBACK_W;
+  const height = vv?.height || window.innerHeight || FALLBACK_H;
+  return {
+    width,
+    height,
+    offsetX: vv?.offsetLeft || 0,
+    offsetY: vv?.offsetTop || 0,
+    portrait: height > width,
+  };
+}
+
+// `env(safe-area-inset-*)` is only resolved to pixels on a real property, so
+// the values are read back off a zero-sized probe element's padding. Optional
+// and guarded: with no probe (or no `getComputedStyle`) the insets are zero
+// and the canvas simply uses the whole visible viewport.
+function refreshSafeInsets() {
+  const probe = typeof document !== 'undefined'
+    ? document.getElementById('safe-area-probe')
+    : null;
+  const style = probe && typeof window.getComputedStyle === 'function'
+    ? window.getComputedStyle(probe)
+    : null;
+  const read = (name) => {
+    const v = parseFloat(style?.getPropertyValue(name));
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  };
+  insets = {
+    top: read('padding-top'),
+    right: read('padding-right'),
+    bottom: read('padding-bottom'),
+    left: read('padding-left'),
+  };
+  return insets;
+}
+
+function safeInsets() {
+  return insets;
+}
+
+// Fit the canvas inside the safe area, centre it on the visible screen, and
+// clamp it out of the insets. Returns the applied CSS box.
+function applyCanvasLayout(canvas) {
+  const vp = measureViewport();
+  const aspect = (canvas.width || FALLBACK_W) / (canvas.height || FALLBACK_H);
+  const availW = Math.max(1, vp.width - insets.left - insets.right);
+  const availH = Math.max(1, vp.height - insets.top - insets.bottom);
+
+  let w = availW;
+  let h = w / aspect;
+  if (h > availH) {
+    h = availH;
+    w = h * aspect;
+  }
+  w = Math.max(1, Math.round(w));
+  h = Math.max(1, Math.round(h));
+
+  // Physically centred where the insets allow it, never inside them.
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const x = clamp((vp.width - w) / 2, insets.left, Math.max(insets.left, vp.width - insets.right - w));
+  const y = clamp((vp.height - h) / 2, insets.top, Math.max(insets.top, vp.height - insets.bottom - h));
+
+  const box = {
+    x: Math.round(vp.offsetX + x),
+    y: Math.round(vp.offsetY + y),
+    w,
+    h,
+  };
+  const style = canvas.style;
+  if (style) {
+    style.width = `${box.w}px`;
+    style.height = `${box.h}px`;
+    style.transform = `translate(${box.x}px, ${box.y}px)`;
+  }
+  return box;
+}
+
+  return { measureViewport, refreshSafeInsets, safeInsets, applyCanvasLayout };
+})();
+
 __modules['src/platform/touch.js'] = (() => {
   const { S } = __modules['src/gameplay/player.js'];
   const { menuButtons } = __modules['src/ui/hud.js'];
+  const { measureViewport } = __modules['src/platform/viewport.js'];
 // Touch controls — large action zones and tap-anywhere timing cues, never
 // tiny targets (DESIGN.md / AGENTS.md rule 8). Maps pointers into the same
 // named-action vocabulary the keyboard uses; gameplay code is unchanged.
@@ -3630,10 +3746,9 @@ class TouchControls {
   }
 
   updateLayout() {
-    const viewport = window.visualViewport;
-    const width = viewport?.width || window.innerWidth;
-    const height = viewport?.height || window.innerHeight;
-    this.portrait = height > width;
+    // Same measurement the canvas box is built from, so button geometry and
+    // the backing store can never disagree about the orientation.
+    this.portrait = measureViewport().portrait;
     this.buttons = this.portrait ? PORTRAIT_BUTTONS : BUTTONS;
   }
 
@@ -3759,19 +3874,14 @@ __modules['src/main/main.js'] = (() => {
   const { loadSprites } = __modules['src/rendering/sprites.js'];
   const { AudioCues } = __modules['src/audio/audio.js'];
   const { TouchControls } = __modules['src/platform/touch.js'];
+  const { measureViewport, refreshSafeInsets, applyCanvasLayout } = __modules['src/platform/viewport.js'];
 // Bootstrap: canvas, fixed-timestep loop, lifecycle handling.
 
 
 const canvas = document.getElementById('game');
 const status = document.getElementById('game-status');
-function viewportPortrait() {
-  const viewport = window.visualViewport;
-  const width = viewport?.width || window.innerWidth;
-  const height = viewport?.height || window.innerHeight;
-  return height > width;
-}
 
-const initialPortrait = viewportPortrait();
+const initialPortrait = measureViewport().portrait;
 canvas.width = initialPortrait ? CONFIG.canvas.portraitWidth : CONFIG.canvas.width;
 canvas.height = initialPortrait ? CONFIG.canvas.portraitHeight : CONFIG.canvas.height;
 const ctx = canvas.getContext('2d');
@@ -3805,20 +3915,44 @@ touch.onMute = () => {
   const muted = audio.toggleMute();
   game.flashHint(muted ? 'Sound off' : 'Sound on');
 };
-function syncViewport() {
-  const portrait = viewportPortrait();
-  const width = portrait ? CONFIG.canvas.portraitWidth : CONFIG.canvas.width;
-  const height = portrait ? CONFIG.canvas.portraitHeight : CONFIG.canvas.height;
+// Viewport plumbing. The measured box drives BOTH the backing store (16:9 or
+// the 9:16 portrait focus view) and the CSS box, so the canvas can never be
+// centred past the edge of the visible screen — the standalone-iOS landscape
+// failure where the lower control row scrolled off the bottom.
+let viewportKey = '';
+function syncViewport(force) {
+  const vp = measureViewport();
+  const key = `${vp.width}x${vp.height}@${vp.offsetX},${vp.offsetY}`;
+  if (!force && key === viewportKey) return;
+  viewportKey = key;
+
+  const width = vp.portrait ? CONFIG.canvas.portraitWidth : CONFIG.canvas.width;
+  const height = vp.portrait ? CONFIG.canvas.portraitHeight : CONFIG.canvas.height;
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
     canvas.height = height;
   }
+  applyCanvasLayout(canvas);
   touch.updateLayout();
-  game.touchPortrait = portrait;
+  game.touchPortrait = vp.portrait;
 }
-window.addEventListener('resize', syncViewport);
-window.visualViewport?.addEventListener('resize', syncViewport);
-window.addEventListener('orientationchange', syncViewport);
+// Rotating between landscape-left and landscape-right swaps the notch inset
+// without changing the viewport size, so every event path re-reads the insets
+// and forces a layout pass.
+function relayout() {
+  refreshSafeInsets();
+  syncViewport(true);
+}
+window.addEventListener('resize', relayout);
+window.visualViewport?.addEventListener('resize', relayout);
+window.visualViewport?.addEventListener('scroll', relayout);
+window.addEventListener('orientationchange', () => {
+  relayout();
+  // iOS reports the pre-rotation geometry for a few frames after the event.
+  for (const delay of [50, 200, 500]) setTimeout(relayout, delay);
+});
+window.addEventListener('pageshow', relayout);
+relayout();
 
 const STEP = 1 / 60;
 let last = performance.now();
@@ -3827,6 +3961,10 @@ let fpsSmoothed = 60;
 let prevScreen = game.screen;
 
 function frame(now) {
+  // Cheap self-heal: a standalone web app can settle into its real geometry
+  // without ever firing a resize we hear about. Four property reads a frame.
+  syncViewport(false);
+
   let dt = (now - last) / 1000;
   last = now;
   dt = Math.min(dt, 0.25); // tab-back protection
