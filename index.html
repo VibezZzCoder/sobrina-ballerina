@@ -1549,10 +1549,10 @@ function drawHUD(ctx, game, view = { width: W, height: H, playHeight: H, portrai
   // Poise meter. The track sizes itself around its own label: the accessible
   // minimum font size scales up on small screens, so a fixed pill would let
   // the text spill past the meter both across and below.
-  const label = `Poise ${Math.round(game.poise)} · confidence`;
+  const label = `Poise ${Math.round(game.poise)}${game.touchMode ? '' : ' · confidence'}`;
   ctx.font = `${labelSize}px Georgia, serif`;
   ctx.textAlign = 'left';
-  const x = 24, y = 22;
+  const x = 24, y = game.touchMode && !view.portrait ? 12 : 22;
   const w = Math.max(view.portrait ? 230 : 260, Math.ceil(ctx.measureText(label).width) + 20);
   const h = Math.max(view.portrait ? 28 : 24, labelSize + 10);
   ctx.fillStyle = 'rgba(20, 14, 36, 0.78)';
@@ -1598,9 +1598,9 @@ function drawHUD(ctx, game, view = { width: W, height: H, playHeight: H, portrai
     // Landscape touch buttons occupy the lower 180 logical pixels. Keep the
     // instruction card above them so the sentence and button labels never
     // compete on short phone screens.
-    const hintY = view.portrait ? view.playHeight + 44 : game.touchMode ? 470 : H - 76;
+    const hintY = view.hintY ?? (view.portrait ? view.playHeight + 44 : H - 76);
     // The card has to hold a keycap, not just a line of text.
-    const boxH = Math.max(view.portrait ? 66 : 48, Math.round(hintSize * 1.46) + 16);
+    const boxH = view.hintHeight || Math.max(66, Math.round(hintSize * 1.46) + 16);
     // When the instruction CHANGES the card warms briefly, then settles. The
     // eye is on the dancer mid-stage; without this, new instructions at the
     // bottom of the screen are simply never read. Soft and short — no strobe.
@@ -1615,8 +1615,8 @@ function drawHUD(ctx, game, view = { width: W, height: H, playHeight: H, portrai
       roundRect(ctx, 18, hintY, screenW - 36, boxH, 12);
       ctx.stroke();
     }
-    drawHintLine(ctx, game.hint, screenW / 2, hintY + boxH * 0.66, screenW - 64, hintSize,
-      '#ffe9a8', { minSize: fontPx(view, 0, true) });
+    drawHintBlock(ctx, game.hint, screenW / 2, hintY, screenW - 64, boxH,
+      hintSize, '#ffe9a8', fontPx(view, 0, true));
   }
 }
 
@@ -1661,25 +1661,29 @@ function drawRoutineProgress(ctx, game, view) {
   // meter does. On a narrow phone the fourth step used to run off-screen, and
   // a clipped "Final po…" is worse than no fourth step at all.
   const margin = view.portrait ? 24 : 20;
-  const maxW = view.width - margin * 2;
+  const systemReserve = game.touchMode && !view.portrait
+    ? 2 * (Math.max(88, Math.ceil(44 / view.cssScale)) + Math.max(12, 6 / view.cssScale)) : 0;
+  const maxW = view.width - margin * 2 - systemReserve;
   const pad = size * 1.2;
   let laid = build('label', size * 1.4);
   if (laid.total + pad > maxW) laid = build('label', size * 0.8);
   if (laid.total + pad > maxW) laid = build('short', size * 0.8);
   const { parts, gap } = laid;
 
-  const preferX = game.touchMode ? (view.portrait ? 24 : 320) : view.width * 0.24;
-  const preferW = game.touchMode ? (view.portrait ? view.width - 48 : 720) : view.width * 0.72;
+  const preferX = game.touchMode ? margin : view.width * 0.24;
+  const preferW = game.touchMode ? maxW : view.width * 0.72;
   const boxW = Math.min(maxW, Math.max(preferW, laid.total + pad));
   const boxX = Math.max(margin, Math.min(view.width - margin - boxW, preferX + preferW / 2 - boxW / 2));
-  const boxY = game.touchMode && view.portrait ? 120 : 66;
+  const boxY = game.touchMode && view.portrait ? 120
+    : game.touchMode ? Math.max(62, fontPx(view, 18, true) + 26) : 62;
+  const boxH = Math.max(view.portrait ? 48 : 38, size * 1.3);
   ctx.fillStyle = 'rgba(20, 14, 36, 0.74)';
-  roundRect(ctx, boxX, boxY, boxW, view.portrait ? 48 : 38, 10);
+  roundRect(ctx, boxX, boxY, boxW, boxH, 10);
   ctx.fill();
 
   ctx.textAlign = 'left';
   let x = boxX + boxW / 2 - laid.total / 2;
-  const baseline = boxY + (view.portrait ? 32 : 26);
+  const baseline = boxY + boxH / 2 + size * 0.34;
   for (const p of parts) {
     ctx.font = fontFor(p);
     // Finished phrases recede, the live one leads, the rest wait quietly.
@@ -1732,8 +1736,10 @@ function menuButtons(game, view) {
   const touchLandscape = game.touchMode && !portrait;
   const modeCards = game.screen === 'mode_select';
   if (portrait || options.length === 3) {
-    const w = portrait ? Math.min(590, view.width - 80) : 300;
-    const h = modeCards ? 128 : portrait ? 82 : touchLandscape ? 88 : 66;
+    const w = portrait ? Math.min(590, view.width - 80)
+      : Math.max(300, game.touchMode ? 120 / (view.cssScale || 1) : 0);
+    const h = Math.max(modeCards ? 128 : portrait ? 82 : touchLandscape ? 88 : 66,
+      game.touchMode ? Math.ceil((modeCards ? 64 : 44) / (view.cssScale || 1)) : 0);
     const gap = portrait ? 22 : 18;
     const startY = menuStartY(game.screen, view, options.length, h, gap);
     if (!portrait && options.length === 3) {
@@ -1746,8 +1752,9 @@ function menuButtons(game, view) {
       ...option, index, x: (view.width - w) / 2, y: startY + index * (h + gap), w, h,
     }));
   }
-  const w = modeCards ? 410 : options.length === 1 ? 320 : 290;
-  const h = modeCards ? 120 : touchLandscape ? 88 : 66;
+  const w = modeCards ? 410 : view.cssScale < 0.4 ? 420 : options.length === 1 ? 320 : 360;
+  const h = Math.max(modeCards ? 120 : touchLandscape ? 88 : 66,
+    game.touchMode ? Math.ceil((modeCards ? 64 : 44) / (view.cssScale || 1)) : 0);
   const gap = 28;
   const total = options.length * w + (options.length - 1) * gap;
   const y = menuStartY(game.screen, view, options.length, h, gap);
@@ -1767,6 +1774,7 @@ function menuStartY(screen, view, count, h, gap) {
   };
   let y = (view.portrait ? portraitY : landscapeY)[screen] || view.height - h - 40;
   if (view.portrait) y = Math.min(y, view.height - count * h - (count - 1) * gap - 50);
+  else y = Math.min(y, view.height - h - 18);
   return y;
 }
 
@@ -1796,11 +1804,12 @@ function button(ctx, b, pressed, selected = false, size = 24, detail = null, det
   ctx.font = `${size}px Georgia, serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h * (detail ? 0.38 : 0.5));
+  ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h * (detail ? 0.28 : 0.5));
   if (detail) {
     ctx.fillStyle = 'rgba(255,233,168,0.86)';
-    ctx.font = `${detailSize || Math.max(18, size - 7)}px Georgia, serif`;
-    ctx.fillText(detail, b.x + b.w / 2, b.y + b.h * 0.69);
+    const subSize = detailSize || Math.max(18, size - 7);
+    ctx.font = `${subSize}px Georgia, serif`;
+    wrapText(ctx, detail, b.x + b.w / 2, b.y + b.h * 0.60, b.w - 24, subSize * 1.15);
   }
   ctx.textBaseline = 'alphabetic';
 }
@@ -1830,26 +1839,33 @@ function drawLessonIntro(ctx, game, view) {
   dim(ctx, 0.66, view);
   const lesson = lessonById(game.lessonId);
   const cx = view.width / 2;
-  const y = view.portrait ? 150 : 105;
+  const compact = !view.portrait && view.cssScale < 0.4;
+  const y = view.portrait ? 150 : compact ? 54 : view.cssScale < 0.6 ? 72 : 105;
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffd98a';
-  ctx.font = `${fontPx(view, view.portrait ? 46 : 42, true)}px Georgia, serif`;
-  ctx.fillText(`Lesson ${game.lessonIndex + 1}: ${lesson.title}`, cx, y);
+  const titleSize = fontPx(view, view.portrait ? 46 : 42, true);
+  ctx.font = `${titleSize}px Georgia, serif`;
+  const titleBottom = wrapText(ctx, `Lesson ${game.lessonIndex + 1}: ${lesson.title}`,
+    cx, y, view.width * 0.92, titleSize * 1.2);
   ctx.fillStyle = '#f6ecd9';
-  ctx.font = `${fontPx(view, view.portrait ? 28 : 24, true)}px Georgia, serif`;
-  let lineY = y + (view.portrait ? 85 : 70);
-  lineY = wrapText(ctx, lesson.definition, cx, lineY, view.width * 0.78, view.portrait ? 44 : 34);
+  const size = fontPx(view, view.portrait ? 28 : 24, true);
+  const lineH = Math.max(view.portrait ? 44 : 32, size * (compact ? 1.15 : 1.2));
+  const paragraphGap = compact ? 8 : 16;
+  const copyWidth = view.width * (view.portrait ? 0.86 : 0.90);
+  ctx.font = `${size}px Georgia, serif`;
+  let lineY = titleBottom + (view.portrait ? 30 : paragraphGap);
+  lineY = wrapText(ctx, lesson.definition, cx, lineY, copyWidth, lineH);
   ctx.fillStyle = 'rgba(246,236,217,0.82)';
-  lineY = wrapText(ctx, lesson.movement, cx, lineY + 22, view.width * 0.76, view.portrait ? 42 : 32);
+  lineY = wrapText(ctx, lesson.movement, cx, lineY + paragraphGap, copyWidth, lineH);
   ctx.fillStyle = '#ffe9a8';
   ctx.font = `bold ${fontPx(view, view.portrait ? 28 : 24, true)}px Georgia, serif`;
-  lineY = wrapText(ctx, `Goal: ${lesson.goal}`, cx, lineY + 32, view.width * 0.78, view.portrait ? 46 : 36);
+  lineY = wrapText(ctx, `Goal: ${lesson.goal}`, cx, lineY + paragraphGap, copyWidth, lineH);
   ctx.fillStyle = '#f6ecd9';
   ctx.font = `${fontPx(view, view.portrait ? 25 : 22, true)}px Georgia, serif`;
   const controls = game.touchMode ? lesson.touch : lesson.keyboard;
-  drawHintLine(ctx, controls, cx, lineY + 34, view.width * 0.78,
-    fontPx(view, view.portrait ? 25 : 22, true), '#f6ecd9',
-    { minSize: fontPx(view, 0, true) });
+  const hintSize = fontPx(view, view.portrait ? 25 : 22, true);
+  drawHintBlock(ctx, controls, cx, lineY + 8, copyWidth, hintSize * 3.4,
+    hintSize, '#f6ecd9', fontPx(view, 0, true));
 }
 
 function drawLessonFeedback(ctx, game, view) {
@@ -1859,7 +1875,8 @@ function drawLessonFeedback(ctx, game, view) {
   ctx.fillStyle = fb.success ? '#ffe9a8' : '#f6ecd9';
   ctx.font = `${fontPx(view, view.portrait ? 29 : 25, true)}px Georgia, serif`;
   ctx.textAlign = 'center';
-  wrapText(ctx, fb.text, view.width / 2, view.portrait ? 360 : 315, view.width * 0.74, view.portrait ? 46 : 36);
+  wrapText(ctx, fb.text, view.width / 2, view.portrait ? 360 : 315, view.width * 0.74,
+    Math.max(view.portrait ? 46 : 36, fontPx(view, view.portrait ? 29 : 25, true) * 1.25));
   if (!fb.success) {
     ctx.fillStyle = 'rgba(255,233,168,0.82)';
     ctx.font = `${fontPx(view, 22, true)}px Georgia, serif`;
@@ -1878,7 +1895,8 @@ function drawRehearsalComplete(ctx, game, view) {
 
 function drawProgram(ctx, game, view) {
   dim(ctx, 0.64, view);
-  heading(ctx, view, 'Nani’s Program', view.portrait ? 150 : 105, 'Dance each phrase in one flowing performance.');
+  const compact = !view.portrait && view.cssScale < 0.4;
+  heading(ctx, view, 'Nani’s Program', view.portrait ? 150 : compact ? 66 : 105, 'Dance each phrase in one flowing performance.');
   // The program doubles as the one-time control briefing for Opening Night:
   // each phrase is listed WITH the control it needs, so the whole routine can
   // be read once here instead of being re-taught by hints mid-performance.
@@ -1906,8 +1924,9 @@ function drawProgram(ctx, game, view) {
     });
   } else {
     items.forEach((item, i) => {
-      drawHintLine(ctx, `${i + 1}. ${item.name} — ${item.how}.`, 300, 262 + i * 62,
-        view.width - 380, size, '#f6ecd9', { align: 'left', minSize: floor });
+      drawHintLine(ctx, `${i + 1}. ${item.name} — ${item.how}.`, compact ? view.width / 2 : 300,
+        262 + i * Math.max(62, size * 1.65), compact ? view.width - 64 : view.width - 380,
+        size, '#f6ecd9', { align: compact ? 'center' : 'left', minSize: floor });
     });
   }
 }
@@ -1940,25 +1959,33 @@ function drawSuccess(ctx, game, time, view) {
   const shortLandscape = !view.portrait && game.touchMode && view.cssScale < 0.75;
   const scoreSize = fontPx(view, view.portrait ? 24 : 21, true);
   const copySize = fontPx(view, view.portrait ? 21 : 18);
+  const copyOffset = Math.max(view.portrait ? 34 : shortLandscape ? 34 : 22, scoreSize * 1.25);
+  const rowStep = Math.max(view.portrait ? 72 : shortLandscape ? 92 : 48,
+    copyOffset + copySize * 1.25 + 8);
   ctx.font = `${scoreSize}px Georgia, serif`;
   rows.forEach(([label, copy], i) => {
     const x = shortLandscape ? (i % 2 ? view.width * 0.67 : view.width * 0.33) : cx;
     const y = shortLandscape
-      ? 220 + Math.floor(i / 2) * 92
-      : (view.portrait ? 285 + i * 72 : 245 + i * 48);
+      ? 220 + Math.floor(i / 2) * rowStep
+      : (view.portrait ? 285 + i * rowStep : 245 + i * rowStep);
     ctx.fillStyle = '#f6ecd9';
+    ctx.font = `${scoreSize}px Georgia, serif`;
     ctx.fillText(label, x, y);
     ctx.fillStyle = 'rgba(255,233,168,0.84)';
     ctx.font = `italic ${copySize}px Georgia, serif`;
-    ctx.fillText(copy, x, y + (view.portrait ? 34 : shortLandscape ? 34 : 22));
+    ctx.fillText(copy, x, y + copyOffset);
     ctx.font = `${scoreSize}px Georgia, serif`;
   });
   ctx.fillStyle = '#ffe9a8';
   ctx.font = `italic ${fontPx(view, view.portrait ? 25 : 22, true)}px Georgia, serif`;
-  ctx.fillText(strengthCopy(r.strongest), cx, view.portrait ? 600 : shortLandscape ? 420 : 470);
+  const strengthY = view.portrait
+    ? Math.max(600, 285 + 3 * rowStep + copyOffset + fontPx(view, 25, true) * 1.6)
+    : shortLandscape ? Math.max(420, 220 + rowStep + copyOffset + fontPx(view, 22, true) * 1.3) : 470;
+  ctx.fillText(strengthCopy(r.strongest), cx, strengthY);
   ctx.fillStyle = 'rgba(246,236,217,0.8)';
   ctx.font = `${fontPx(view, view.portrait ? 21 : 18)}px Georgia, serif`;
-  ctx.fillText(focusCopy(r.focus), cx, view.portrait ? 650 : shortLandscape ? 465 : 505);
+  ctx.fillText(focusCopy(r.focus), cx, view.portrait ? strengthY + 50
+    : shortLandscape ? strengthY + Math.max(45, copySize * 1.4) : 505);
 }
 
 function drawFail(ctx, game, view) {
@@ -1967,7 +1994,8 @@ function drawFail(ctx, game, view) {
   ctx.fillStyle = '#ffe9a8';
   ctx.font = `${fontPx(view, view.portrait ? 24 : 21, true)}px Georgia, serif`;
   ctx.textAlign = 'center';
-  ctx.fillText('Stay near the spotlights to protect your Poise.', view.width / 2, view.portrait ? 430 : 360);
+  wrapText(ctx, 'Stay near the spotlights to protect your Poise.', view.width / 2,
+    view.portrait ? 430 : 360, view.width * 0.88, fontPx(view, 26, true) * 1.3);
 }
 
 function heading(ctx, view, title, y, subtitle) {
@@ -1978,7 +2006,8 @@ function heading(ctx, view, title, y, subtitle) {
   if (subtitle) {
     ctx.fillStyle = '#f6ecd9';
     ctx.font = `italic ${fontPx(view, view.portrait ? 26 : 23, true)}px Georgia, serif`;
-    wrapText(ctx, subtitle, view.width / 2, y + (view.portrait ? 62 : 52), view.width * 0.76, view.portrait ? 42 : 34);
+    wrapText(ctx, subtitle, view.width / 2, y + (view.portrait ? 62 : 52), view.width * 0.76,
+      Math.max(view.portrait ? 42 : 34, fontPx(view, view.portrait ? 26 : 23, true) * 1.25));
   }
 }
 
@@ -2076,6 +2105,27 @@ function measureHint(ctx, segments, size) {
     }
   }
   return w;
+}
+
+// Wrap at word boundaries, keeping a control chip intact. A readability floor
+// is not a fit policy: long instructions need another line, not offscreen ink.
+function drawHintBlock(ctx, text, cx, top, maxWidth, height, startingSize, color, minSize) {
+  let size = startingSize;
+  while (size > minSize && measureHint(ctx, hintSegments(text), size) > maxWidth) size--;
+  const words = text.match(/\[[^\]]+\]|\S+/g) || [];
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? `${line} ${word}` : word;
+    if (line && measureHint(ctx, hintSegments(next), size) > maxWidth) {
+      lines.push(line); line = word;
+    } else line = next;
+  }
+  if (line) lines.push(line);
+  const lineH = size * 1.65;
+  const firstBaseline = top + height / 2 - (lines.length - 1) * lineH / 2 + size * 0.34;
+  lines.forEach((line, i) => drawHintLine(ctx, line, cx, firstBaseline + i * lineH,
+    maxWidth, size, color, { minSize }));
 }
 
 // Hint line with inline keycaps. Shrinks to fit, but never below `minSize` —
@@ -2227,6 +2277,8 @@ function drawDebug(ctx, game, view = { cameraX: 0 }) {
   ctx.stroke();
 
   // Spotting window timeline (during pirouette).
+  ctx.save();
+  ctx.translate(0, view.worldTop || 0);
   if ([S.PIR_SPIN, S.SPOT].includes(p.state)) {
     const bx = 480, bw = 320, by = 70;
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
@@ -2258,6 +2310,7 @@ function drawDebug(ctx, game, view = { cameraX: 0 }) {
   ctx.font = '13px Menlo, monospace';
   ctx.textAlign = 'left';
   lines.forEach((l, i) => ctx.fillText(l, panelX + 10, 84 + i * 18));
+  ctx.restore();
 }
 
   return { drawDebug };
@@ -2492,6 +2545,149 @@ function successBowFrame(t) {
   return { loadSprites, stageImage, spriteFrame, successBowFrame };
 })();
 
+__modules['src/platform/viewport.js'] = (() => {
+
+// Screen layout for the letterboxed canvas: how large the drawing surface is
+// and exactly where it sits on the visible screen.
+//
+// Nothing here trusts CSS. An iOS home-screen web app can keep the PREVIOUS
+// orientation's layout viewport, safe-area inset, and `orientation` media
+// query alive after a rotation. A `dvh`-sized, flex-centred canvas is then
+// sized correctly but pushed down by the stale portrait status-bar inset, so
+// landscape loses its bottom control row off the bottom of the screen while
+// portrait — where the stale inset matches the live one — looks perfect.
+// Measuring the live visual viewport and writing explicit pixel geometry
+// sidesteps every one of those stale signals.
+
+const FALLBACK_W = 1280;
+const FALLBACK_H = 720;
+
+let insets = { top: 0, right: 0, bottom: 0, left: 0 };
+
+// The live VISIBLE box, plus its offset inside the (possibly stale) layout
+// viewport that `position: fixed` is resolved against.
+function measureViewport() {
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  const width = vv?.width || window.innerWidth || FALLBACK_W;
+  const height = vv?.height || window.innerHeight || FALLBACK_H;
+  return {
+    width,
+    height,
+    offsetX: vv?.offsetLeft || 0,
+    offsetY: vv?.offsetTop || 0,
+    portrait: height > width,
+  };
+}
+
+// `env(safe-area-inset-*)` is only resolved to pixels on a real property, so
+// the values are read back off a zero-sized probe element's padding. Optional
+// and guarded: with no probe (or no `getComputedStyle`) the insets are zero
+// and the canvas simply uses the whole visible viewport.
+function refreshSafeInsets() {
+  const probe = typeof document !== 'undefined'
+    ? document.getElementById('safe-area-probe')
+    : null;
+  const style = probe && typeof window.getComputedStyle === 'function'
+    ? window.getComputedStyle(probe)
+    : null;
+  const read = (name) => {
+    const v = parseFloat(style?.getPropertyValue(name));
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  };
+  insets = {
+    top: read('padding-top'),
+    right: read('padding-right'),
+    bottom: read('padding-bottom'),
+    left: read('padding-left'),
+  };
+  return insets;
+}
+
+function safeInsets() {
+  return insets;
+}
+
+// Fit the canvas inside the safe area, centre it on the visible screen, and
+// clamp it out of the insets. Returns the applied CSS box.
+function applyCanvasLayout(canvas) {
+  const vp = measureViewport();
+  const aspect = (canvas.width || FALLBACK_W) / (canvas.height || FALLBACK_H);
+  const availW = Math.max(1, vp.width - insets.left - insets.right);
+  const availH = Math.max(1, vp.height - insets.top - insets.bottom);
+
+  let w = availW;
+  let h = w / aspect;
+  if (h > availH) {
+    h = availH;
+    w = h * aspect;
+  }
+  w = Math.max(1, Math.round(w));
+  h = Math.max(1, Math.round(h));
+
+  // Physically centred where the insets allow it, never inside them.
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const x = clamp((vp.width - w) / 2, insets.left, Math.max(insets.left, vp.width - insets.right - w));
+  const y = clamp((vp.height - h) / 2, insets.top, Math.max(insets.top, vp.height - insets.bottom - h));
+
+  const box = {
+    x: Math.round(vp.offsetX + x),
+    y: Math.round(vp.offsetY + y),
+    w,
+    h,
+  };
+  const style = canvas.style;
+  if (style) {
+    style.width = `${box.w}px`;
+    style.height = `${box.h}px`;
+    style.transform = `translate(${box.x}px, ${box.y}px)`;
+  }
+  return box;
+}
+
+  return { measureViewport, refreshSafeInsets, safeInsets, applyCanvasLayout };
+})();
+
+__modules['src/ui/layout.js'] = (() => {
+  const { CONFIG } = __modules['src/data/config.js'];
+  const { measureViewport } = __modules['src/platform/viewport.js'];
+// Shared screen-space geometry. Rendering and hit testing use the same scale;
+// gameplay/world coordinates never change when a device rotates.
+
+function gameView(canvas, game) {
+  const width = canvas.width, height = canvas.height;
+  const rect = canvas.getBoundingClientRect?.() || { width, height };
+  const cssScale = Math.max(0.01, Math.min(rect.width / width, rect.height / height));
+  const portrait = measureViewport().portrait;
+  const view = { width, height, portrait, cssScale,
+    playHeight: portrait ? CONFIG.canvas.portraitPlayHeight : CONFIG.canvas.height,
+    stageTop: 0, worldTop: 0, worldScale: 1, stageX: 0, cameraX: portrait
+      ? Math.max(0, Math.min(CONFIG.canvas.width - width, game.player.x - width / 2)) : 0 };
+  // Reserve two readable lines, a thumb row, and a header on landscape touch.
+  // Crop unused upper scenery, not the dancer, and retain the full stage width.
+  if (game.touchMode && !portrait) {
+    const margin = Math.max(12, 6 / cssScale);
+    const gap = Math.max(12, 6 / cssScale);
+    view.padHeight = Math.max(104, 48 / cssScale);
+    view.padY = height - margin - view.padHeight;
+    view.hintHeight = Math.max(84, 54 / cssScale);
+    view.hintY = view.padY - gap - view.hintHeight;
+    view.stageTop = Math.max(116, 56 / cssScale);
+    view.playHeight = view.hintY - gap;
+    // A toolbar can leave only 240px of height. Keep at least 300 world
+    // pixels visible vertically so even the complete jump silhouette fits.
+    view.worldScale = Math.min(1, (view.playHeight - view.stageTop) / 300);
+    view.stageX = (width - CONFIG.canvas.width * view.worldScale) / 2;
+    view.worldTop = 680 - (view.playHeight - view.stageTop) / view.worldScale;
+  } else {
+    view.hintY = portrait ? view.playHeight + 32 : height - 76;
+    view.hintHeight = portrait ? Math.max(100, 54 / cssScale) : 60;
+  }
+  return view;
+}
+
+  return { gameView };
+})();
+
 __modules['src/rendering/renderer.js'] = (() => {
   const { CONFIG } = __modules['src/data/config.js'];
   const { LEVEL } = __modules['src/data/level.js'];
@@ -2499,6 +2695,7 @@ __modules['src/rendering/renderer.js'] = (() => {
   const { drawHUD, drawScreens, drawTouchButtons, drawTouchSystem } = __modules['src/ui/hud.js'];
   const { drawDebug } = __modules['src/debug/overlay.js'];
   const { spriteFrame, successBowFrame, stageImage } = __modules['src/rendering/sprites.js'];
+  const { gameView } = __modules['src/ui/layout.js'];
 // Rendering only — reads game state, draws it. Never decides gameplay.
 // Visual rules: DESIGN.md (light = warm gold, shadow = soft blue-violet).
 
@@ -2508,31 +2705,21 @@ const H = CONFIG.canvas.height;
 const FLOOR = LEVEL.floorY;
 
 function render(ctx, game, time, touch) {
-  const portrait = ctx.canvas.height > ctx.canvas.width;
-  const rect = typeof ctx.canvas.getBoundingClientRect === 'function'
-    ? ctx.canvas.getBoundingClientRect()
-    : { width: ctx.canvas.width, height: ctx.canvas.height };
-  const view = {
-    width: ctx.canvas.width,
-    height: ctx.canvas.height,
-    playHeight: portrait ? CONFIG.canvas.portraitPlayHeight : H,
-    cameraX: portrait
-      ? Math.max(0, Math.min(W - ctx.canvas.width, game.player.x - ctx.canvas.width / 2))
-      : 0,
-    portrait,
-    cssScale: Math.max(0.01, Math.min(
-      rect.width / ctx.canvas.width,
-      rect.height / ctx.canvas.height,
-    )),
-  };
+  const view = gameView(ctx.canvas, game);
+  const dancing = game.screen === 'playing' || game.screen === 'paused';
+  const stageTop = dancing ? view.stageTop : 0;
+  const worldTop = dancing ? view.worldTop : 0;
+  const playHeight = dancing ? view.playHeight : view.portrait ? CONFIG.canvas.portraitPlayHeight : H;
 
   ctx.fillStyle = '#14101f';
   ctx.fillRect(0, 0, view.width, view.height);
   ctx.save();
   ctx.beginPath();
-  ctx.rect(0, 0, view.width, view.playHeight);
+  ctx.rect(0, stageTop, view.width, playHeight - stageTop);
   ctx.clip();
-  ctx.translate(-view.cameraX, 0);
+  ctx.translate(dancing ? view.stageX : 0, stageTop);
+  ctx.scale(dancing ? view.worldScale : 1, dancing ? view.worldScale : 1);
+  ctx.translate(-view.cameraX, -worldTop);
   drawBackground(ctx, time);
   drawDeepShadow(ctx);
   drawSpotlights(ctx, game, time);
@@ -3580,112 +3767,11 @@ class AudioCues {
   return { AudioCues };
 })();
 
-__modules['src/platform/viewport.js'] = (() => {
-
-// Screen layout for the letterboxed canvas: how large the drawing surface is
-// and exactly where it sits on the visible screen.
-//
-// Nothing here trusts CSS. An iOS home-screen web app can keep the PREVIOUS
-// orientation's layout viewport, safe-area inset, and `orientation` media
-// query alive after a rotation. A `dvh`-sized, flex-centred canvas is then
-// sized correctly but pushed down by the stale portrait status-bar inset, so
-// landscape loses its bottom control row off the bottom of the screen while
-// portrait — where the stale inset matches the live one — looks perfect.
-// Measuring the live visual viewport and writing explicit pixel geometry
-// sidesteps every one of those stale signals.
-
-const FALLBACK_W = 1280;
-const FALLBACK_H = 720;
-
-let insets = { top: 0, right: 0, bottom: 0, left: 0 };
-
-// The live VISIBLE box, plus its offset inside the (possibly stale) layout
-// viewport that `position: fixed` is resolved against.
-function measureViewport() {
-  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
-  const width = vv?.width || window.innerWidth || FALLBACK_W;
-  const height = vv?.height || window.innerHeight || FALLBACK_H;
-  return {
-    width,
-    height,
-    offsetX: vv?.offsetLeft || 0,
-    offsetY: vv?.offsetTop || 0,
-    portrait: height > width,
-  };
-}
-
-// `env(safe-area-inset-*)` is only resolved to pixels on a real property, so
-// the values are read back off a zero-sized probe element's padding. Optional
-// and guarded: with no probe (or no `getComputedStyle`) the insets are zero
-// and the canvas simply uses the whole visible viewport.
-function refreshSafeInsets() {
-  const probe = typeof document !== 'undefined'
-    ? document.getElementById('safe-area-probe')
-    : null;
-  const style = probe && typeof window.getComputedStyle === 'function'
-    ? window.getComputedStyle(probe)
-    : null;
-  const read = (name) => {
-    const v = parseFloat(style?.getPropertyValue(name));
-    return Number.isFinite(v) && v > 0 ? v : 0;
-  };
-  insets = {
-    top: read('padding-top'),
-    right: read('padding-right'),
-    bottom: read('padding-bottom'),
-    left: read('padding-left'),
-  };
-  return insets;
-}
-
-function safeInsets() {
-  return insets;
-}
-
-// Fit the canvas inside the safe area, centre it on the visible screen, and
-// clamp it out of the insets. Returns the applied CSS box.
-function applyCanvasLayout(canvas) {
-  const vp = measureViewport();
-  const aspect = (canvas.width || FALLBACK_W) / (canvas.height || FALLBACK_H);
-  const availW = Math.max(1, vp.width - insets.left - insets.right);
-  const availH = Math.max(1, vp.height - insets.top - insets.bottom);
-
-  let w = availW;
-  let h = w / aspect;
-  if (h > availH) {
-    h = availH;
-    w = h * aspect;
-  }
-  w = Math.max(1, Math.round(w));
-  h = Math.max(1, Math.round(h));
-
-  // Physically centred where the insets allow it, never inside them.
-  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const x = clamp((vp.width - w) / 2, insets.left, Math.max(insets.left, vp.width - insets.right - w));
-  const y = clamp((vp.height - h) / 2, insets.top, Math.max(insets.top, vp.height - insets.bottom - h));
-
-  const box = {
-    x: Math.round(vp.offsetX + x),
-    y: Math.round(vp.offsetY + y),
-    w,
-    h,
-  };
-  const style = canvas.style;
-  if (style) {
-    style.width = `${box.w}px`;
-    style.height = `${box.h}px`;
-    style.transform = `translate(${box.x}px, ${box.y}px)`;
-  }
-  return box;
-}
-
-  return { measureViewport, refreshSafeInsets, safeInsets, applyCanvasLayout };
-})();
-
 __modules['src/platform/touch.js'] = (() => {
   const { S } = __modules['src/gameplay/player.js'];
   const { menuButtons } = __modules['src/ui/hud.js'];
   const { measureViewport } = __modules['src/platform/viewport.js'];
+  const { gameView } = __modules['src/ui/layout.js'];
 // Touch controls — large action zones and tap-anywhere timing cues, never
 // tiny targets (DESIGN.md / AGENTS.md rule 8). Maps pointers into the same
 // named-action vocabulary the keyboard uses; gameplay code is unchanged.
@@ -3726,6 +3812,7 @@ class TouchControls {
     canvas.addEventListener('pointerdown', (e) => this.down(e));
     canvas.addEventListener('pointerup', (e) => this.up(e));
     canvas.addEventListener('pointercancel', (e) => this.up(e));
+    canvas.addEventListener('lostpointercapture', (e) => this.up(e));
     canvas.addEventListener('contextmenu', (e) => { if (this.active) e.preventDefault(); });
     // Safari can surface a text-selection callout for a long touch even though
     // the game is canvas-rendered. Keep the game surface an interaction-only
@@ -3749,7 +3836,28 @@ class TouchControls {
     // Same measurement the canvas box is built from, so button geometry and
     // the backing store can never disagree about the orientation.
     this.portrait = measureViewport().portrait;
-    this.buttons = this.portrait ? PORTRAIT_BUTTONS : BUTTONS;
+    const view = gameView(this.canvas, this.game);
+    const minTarget = Math.ceil(44 / view.cssScale);
+    this.buttons = (this.portrait ? PORTRAIT_BUTTONS : BUTTONS).map(b => ({ ...b }));
+    if (!this.portrait) {
+      const gap = Math.max(16, 8 / view.cssScale);
+      const margin = Math.max(24, 10 / view.cssScale);
+      const moveW = Math.max(120, 56 / view.cssScale);
+      const actionW = Math.max(150, 72 / view.cssScale);
+      const positions = [margin, margin + moveW + gap,
+        view.width - margin - 3 * actionW - 2 * gap,
+        view.width - margin - 2 * actionW - gap, view.width - margin - actionW];
+      this.buttons.filter(b => !b.system).forEach((b, i) => {
+        Object.assign(b, { x: positions[i], y: view.padY || 588,
+          w: i < 2 ? moveW : actionW, h: view.padHeight || 104 });
+      });
+    }
+    const systemSize = Math.max(88, minTarget);
+    const gap = Math.max(12, 6 / view.cssScale);
+    this.buttons.filter(b => b.system).forEach((b, i) => {
+      Object.assign(b, { x: view.width - gap - systemSize - i * (systemSize + gap),
+        y: gap, w: systemSize, h: systemSize });
+    });
   }
 
   // Client -> logical canvas coords (geometry read once per pointerdown).
@@ -3773,8 +3881,15 @@ class TouchControls {
     );
   }
 
+  menuButtons() {
+    return menuButtons(this.game, gameView(this.canvas, this.game));
+  }
+
   down(e) {
     const pt = this.toLogical(e);
+    // A thumb can slide beyond the canvas before lifting. Still receive its
+    // release so movement or a charged Leap cannot remain held indefinitely.
+    if (this.active) this.canvas.setPointerCapture?.(e.pointerId);
 
     // Menu screens are pointer-selectable on EVERY device — desktop mouse and
     // trackpad included — because the buttons are visibly drawn there whether
@@ -3790,12 +3905,7 @@ class TouchControls {
         this.apply(system.id, true);
         return;
       }
-      const view = {
-        width: this.canvas.width,
-        height: this.canvas.height,
-        portrait: this.portrait,
-      };
-      const menu = menuButtons(this.game, view).find(
+      const menu = this.menuButtons().find(
         (b) => pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h,
       );
       if (menu) {
